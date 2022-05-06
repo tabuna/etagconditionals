@@ -5,6 +5,7 @@ namespace Werk365\EtagConditionals\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Werk365\EtagConditionals\EtagConditionals;
 
 class IfMatch extends Middleware
 {
@@ -32,19 +33,39 @@ class IfMatch extends Middleware
         $getResponse = app()->handle($getRequest);
 
         // Get content from response object and get hashes from content and etag
-        $getContent = $getResponse->getContent();
-        $getEtag = '"'.md5($getContent).'"';
+        $getEtag = EtagConditionals::getEtag($request, $getResponse);
         $ifMatch = $request->header('If-Match');
+
+        if ($ifMatch === null) {
+            return response(null, 412);
+        }
+
+        $ifMatchArray = (is_string($ifMatch)) ?
+            explode(',', $ifMatch) :
+            $ifMatch;
 
         // Strip W/ if weak comparison algorithm can be used
         if (config('etagconditionals.if_match_weak')) {
-            $ifMatch = str_replace('W/', '', $ifMatch);
+            foreach ($ifMatchArray as &$match) {
+                $match = str_replace('W/', '', $match);
+            }
+            unset($match);
         }
 
+        foreach ($ifMatchArray as &$match) {
+            $match = trim($match);
+        }
+        unset($match);
+
         // Compare current and request hashes
-        if ($getEtag !== $ifMatch) {
+        // Also allow wildcard (*) values
+        if (! (in_array($getEtag, $ifMatchArray) || in_array('"*"', $ifMatchArray))) {
             return response(null, 412);
         }
+
+        // Before continuing, prepare the application to receive our request
+        // This is for Laravel Octane support
+        app()->instance('request', $request);
 
         return $next($request);
     }
